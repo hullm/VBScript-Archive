@@ -1,0 +1,204 @@
+<?xml version="1.0"?>
+<component>
+
+<registration
+	description="ADHelper"
+	progid="ADHelper.WSC"
+	version="1.00"
+	classid="{ff10e945-49c8-4ece-bd1e-855adc2df945}"
+>
+</registration>
+
+<public>
+	<method name="OUObject">
+		<PARAMETER name="mstrOU"/>
+	</method>
+	<method name="GroupObject">
+		<PARAMETER name="smtrGroup"/>
+	</method>
+</public>
+
+<script language="VBScript">
+<![CDATA[
+
+   Private mstrOU, mobjConnection, mobjCommand, mobjRecordSet, mobjOUList, mintOUCount 
+   Private mintChoice, mstrInput, mstrDN, mstrFullOU, mobjOU, mobjRootDSE
+   Private mstrGroup, mbolGroupFound, mobjNet, mstrDomain
+
+   Public Function OUObject(mstrOU)
+            
+      'This is used to retrieve a list of OU's from the domain
+      'that match the requested name.  If there is only one returned the script
+      'will continue to run.  If more then one OU is returned it will display a
+      'list of OU's for you to choose from.
+
+      On Error Resume Next
+      
+      'Create a RootDSE Object, this will be used to connect to the domain
+      Set mobjRootDSE = GetObject("LDAP://rootDSE")
+
+      'Exit the script if it can't get the domain information
+      If Err Then
+         MsgBox "You are either not on a domain or not connected to the network.  " & _
+            "The script will now exit.",vbCritical,"Network Missing"
+         Err.Clear
+         WScript.Quit
+      End If
+     
+      'Establish a connection to Active Directory using ActiveX Data Object
+      Set mobjConnection = CreateObject("ADODB.Connection")
+      mobjConnection.Open "Provider=ADSDSOObject;"
+      
+      'Create the command object and attach it to the connection object
+      Set mobjCommand = CreateObject("ADODB.Command")
+      mobjCommand.ActiveConnection = mobjConnection
+      
+      'mobjCommand defines the search base '(in this case the whole domain) 
+      'a filter (All object of type OrganizationalUnit) and some attributes 
+      'associated with the returned objects (Name and DistinguishedName)
+      mobjCommand.CommandText = "<LDAP://" & mobjRootDSE.Get("DefaultNamingContext") & _
+      ">;(&(objectClass=OrganizationalUnit));Name,DistinguishedName"
+      
+      'Initiate the LDAP query and return results to a RecordSet object.
+      Set mobjRecordSet = mobjCommand.Execute
+      
+      'Create the object mobjOUList which will contain all the matching OU's
+      Set mobjOUList = CreateObject("Scripting.Dictionary")
+      
+      'mintOUCount will contain the number of OU's returned that match the requested OU.
+      'mintChoice will be 1 if only one OU is found and chossen by the user if more 
+      'then one OU is found.  This will be used to select the OU from mobjOUList.
+      mintOUCount = 0
+      mintChoice = 0
+      
+      'If more then one OU is found this will be the error message displayed.
+      mstrInput = "There was more then one OU found with named " & mstrOU & ", please "
+      mstrInput = mstrInput & "choose the correct OU from the list below" & vbCRLF
+      mstrInput = mstrInput & "The input will be required on the next screen."
+      mstrInput = mstrInput & vbCRLF & vbCRLF
+      
+      'Loop thru the returned RecordSet and look for the OU.  If found it adds the 
+      'DN name to mobjOUList and the error message. It will also increases mintOUCount by 1.
+      While Not mobjRecordSet.EOF
+         If uCase(mobjRecordSet.Fields("Name")) = UCase(mstrOU) Then
+            mintOUCount = mintOUCount + 1
+            mstrInput = mstrInput & mintOUCount & " - " & _
+            mobjRecordSet.Fields("DistinguishedName") & vbCRLF
+            mstrDN = mobjRecordSet.Fields("DistinguishedName")
+            mobjOUList.Add "Key" & mintOUCount, mstrDN
+         End If
+         mobjRecordSet.MoveNext
+      Wend
+      
+      'Close the connection with Active Directory
+      mobjConnection.Close
+      
+      'If more then one OU is found it will ask you which you want, if only one is
+      'found it will set mintChoice to 1.  If no OU is found the script will exit.
+      If mintOUCount > 1 Then
+         Do Until mobjOUList.Item("Key" & mintChoice) <> ""
+            MsgBox mstrInput,vbOkOnly,"More Then One OU Located"
+            mintChoice = InputBox("Please choose your OU","Select OU","Enter " & _
+            "a number from the previous screen")
+            If mintChoice = "" Then
+               WScript.Quit
+            ElseIf mobjOUList.Item("Key" & mintChoice) = "" Then
+               MsgBox "You must choose a valid OU to continue.",vbOkOnly,"Error"
+            End If
+         Loop 
+      ElseIf mintOUCount = 0 Then
+         Err.Raise 10, "ADHelper", mstrOU & " is not a valid OU."
+      Else
+         mintChoice = 1
+      End If
+      
+      'Build the OU string and create the OU object
+      mstrFullOU = "LDAP://" & mobjOUList.Item("Key" & mintChoice)
+      Set OUObject = GetObject(mstrFullOU)
+      
+      Set mobjRecordSet = Nothing
+      Set mobjConnection = Nothing
+      Set mobjCommand = Nothing
+      Set mobjRecordSet = Nothing
+      Set mobjOUList = Nothing
+   
+   End Function
+   
+   Public Function GroupObject(mstrGroup)
+   
+      On Error Resume Next
+   
+      'Create a Net Object, this will be used to get the domain name
+      Set mobjNet = CreateObject("WScript.Network")
+      
+      'Create a RootDSE Object, this will be used to connect to the domain
+      Set mobjRootDSE = GetObject("LDAP://rootDSE")
+      
+      'Exit the script if it can't get the domain information
+      If Err Then
+         MsgBox "You are either not on a domain or not connected to the network.  " & _
+            "The script will now exit.",vbCritical,"Network Missing"
+         Err.Clear
+         WScript.Quit
+      End If
+      
+      'This will turn true if the user entered a valid group name
+      mbolGroupFound = False
+      
+      'I don't know why but this script doesn't work on the Domain Users group,
+      'this will let the user know that if they try to do it.
+      If uCase(mstrGroup) = "DOMAIN USERS" Then
+         MsgBox "You cannot create folders for members of the Domain Users group.", _
+         vbOkOnly,"Domain USers"
+         Wscript.Quit
+      End If
+      
+      'Establish a connection to Active Directory using ActiveX Data Object
+      Set mobjConnection = CreateObject("ADODB.Connection")
+      mobjConnection.Open "Provider=ADSDSOObject;"
+      
+      'Create the command object and attach it to the connection object
+      Set mobjCommand = CreateObject("ADODB.Command")
+      mobjCommand.ActiveConnection = mobjConnection
+      
+      'objCommand defines the search base (in this case the whole domain) 
+      'a filter (All object of type Group) and some attributes 
+      'associated with the returned objects (CN and DistinguishedName)
+      mobjCommand.CommandText = "<LDAP://" & mobjRootDSE.Get("DefaultNamingContext") & _
+      ">;(&(objectClass=group));CN,DistinguishedName"
+      
+      'Initiate the LDAP query and return results to a RecordSet object.
+      Set mobjRecordSet = mobjCommand.Execute
+      
+      'Get the domain name
+      mstrDomain = mobjNet.UserDomain
+      
+      'Loop Thru each record in the record set.
+      While Not mobjRecordset.EOF
+         
+         If uCase(mobjRecordset.Fields("CN")) = uCase(mstrGroup) Then
+
+            'The group was found so this is changed to true
+            mbolGroupFound = True
+            
+            'Build the Group path and create the Group object
+            strADSPath = "LDAP://" & mobjRecordset.Fields("DistinguishedName")
+            Set GroupObject = GetObject(strADSPath)
+         End If
+         mobjRecordSet.MoveNext
+      WEnd
+      If mbolGroupFound = False Then
+         Err.Raise 10, "ADHelper", mstrGroup & " is not a valid group."
+      End If
+      
+      Set mobjNet = Nothing
+      Set mobjRecordSet = Nothing
+      Set mobjConnection = Nothing
+      Set mobjCommand = Nothing
+      Set mobjRecordSet = Nothing
+      
+   End Function
+]]>
+</script>
+
+</component>
